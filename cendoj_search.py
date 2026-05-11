@@ -22,18 +22,25 @@ import json
 import re
 import sys
 import time
-from html import unescape
 from html.parser import HTMLParser
 from urllib import request
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 BASE = "https://www.poderjudicial.es/search"
+_u = urlsplit(BASE)
+ORIGIN = f"{_u.scheme}://{_u.netloc}"
 UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 )
 
 JURISDICCIONES = {"CIVIL", "PENAL", "CONTENCIOSO", "SOCIAL", "MILITAR", "ESPECIAL"}
+COMUNIDADES = {
+    "CANARIAS", "MADRID", "CATALUÑA", "ANDALUCÍA", "ARAGÓN", "ASTURIAS",
+    "BALEARES", "CANTABRIA", "CASTILLA_LA_MANCHA", "CASTILLA_Y_LEÓN",
+    "CEUTA", "COMUNIDAD_VALENCIANA", "EXTREMADURA", "GALICIA", "LA_RIOJA",
+    "MELILLA", "MURCIA", "NAVARRA", "PAÍS_VASCO",
+}
 
 
 def _enc(s: str) -> str:
@@ -94,18 +101,19 @@ class CendojSession:
                     raise ValueError(f"jurisdiccion must be one of {JURISDICCIONES}, got {v!r}")
             parts.append(f"JURISDICCION={_enc('|' + '|'.join(vals) + '|')}")
         if comunidad:
+            if comunidad not in COMUNIDADES:
+                raise ValueError(f"comunidad must be one of {COMUNIDADES}, got {comunidad!r}")
             # Wire format observed: "CANARIAS(C) | "  (name + "(C)" + space + "|" + trailing space)
             parts.append(f"VALUESCOMUNIDAD={_enc(comunidad + '(C) | ')}")
-        if fecha_desde:
-            parts.append(f"FECHARESOLUCIONDESDE={_enc(fecha_desde)}")
-        if fecha_hasta:
-            parts.append(f"FECHARESOLUCIONHASTA={_enc(fecha_hasta)}")
-        if roj:
-            parts.append(f"ROJ={_enc(roj)}")
-        if ecli:
-            parts.append(f"ECLI={_enc(ecli)}")
-        if ponente:
-            parts.append(f"PONENTE={_enc(ponente)}")
+        for key, value in (
+            ("FECHARESOLUCIONDESDE", fecha_desde),
+            ("FECHARESOLUCIONHASTA", fecha_hasta),
+            ("ROJ", roj),
+            ("ECLI", ecli),
+            ("PONENTE", ponente),
+        ):
+            if value:
+                parts.append(f"{key}={_enc(value)}")
 
         body = "&".join(parts).encode("utf-8")
 
@@ -117,7 +125,7 @@ class CendojSession:
                 "X-Requested-With": "XMLHttpRequest",
                 "Accept": "text/html, */*; q=0.01",
                 "Referer": f"{BASE}/indexAN.jsp",
-                "Origin": BASE.rsplit("/", 1)[0],
+                "Origin": ORIGIN,
             },
         )
         with self.opener.open(req, timeout=20) as r:
@@ -207,7 +215,7 @@ class _TextExtractor(HTMLParser):
 def _strip_html(html: str) -> str:
     p = _TextExtractor()
     p.feed(html)
-    return unescape(p.text())
+    return p.text()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -229,12 +237,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "-c",
         "--comunidad",
-        help=(
-            "autonomous community: CANARIAS, MADRID, CATALUÑA, ANDALUCÍA, "
-            "ARAGÓN, ASTURIAS, BALEARES, CANTABRIA, CASTILLA_LA_MANCHA, "
-            "CASTILLA_Y_LEÓN, CEUTA, COMUNIDAD_VALENCIANA, EXTREMADURA, "
-            "GALICIA, LA_RIOJA, MELILLA, MURCIA, NAVARRA, PAÍS_VASCO"
-        ),
+        choices=sorted(COMUNIDADES),
+        metavar="COMUNIDAD",
+        help="autonomous community (e.g. CANARIAS, MADRID, CATALUÑA)",
     )
     p.add_argument("--desde", help="date from (dd/mm/yyyy)")
     p.add_argument("--hasta", help="date to (dd/mm/yyyy)")

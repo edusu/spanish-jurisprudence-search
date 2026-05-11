@@ -37,7 +37,7 @@ The client is deliberately conservative:
 | Single sequential request per invocation | No concurrency, no batching |
 | Default `--delay 0.5s` between bootstrap and search | Avoids hammering the endpoint |
 | Stops on WAF response, surfaces error to user | No retry loops, no evasion |
-| Honest `User-Agent` (Chrome on macOS) | Not impersonating CGPJ infrastructure or another service |
+| Standard browser `User-Agent` (Chrome on macOS) | Not impersonating CGPJ infrastructure or another service |
 | No persistent cache, no bulk store | Output goes to stdout and disappears |
 
 If you fork this and add aggressive crawling, rotation, or evasion, you are

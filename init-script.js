@@ -4,7 +4,7 @@ async (page) => {
     const origFetch = window.fetch;
     window.fetch = async function(...args) {
       const [url, opts={}] = args;
-      const entry = { kind: 'fetch', url: String(url), method: (opts && opts.method) || 'GET', body: (opts && opts.body) ? String(opts.body) : null, ts: Date.now() };
+      const entry = { kind: 'fetch', url: String(url), method: opts?.method || 'GET', body: opts?.body ? String(opts.body) : null, ts: Date.now() };
       try {
         const resp = await origFetch.apply(this, args);
         entry.status = resp.status;

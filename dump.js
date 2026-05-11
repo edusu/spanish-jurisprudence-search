@@ -1,3 +1,3 @@
 async (page) => {
-  return JSON.stringify(globalThis.__captured || 'NO_CAPTURE_GLOBAL', null, 2);
+  return JSON.stringify(await page.evaluate(() => window.__log) || 'NO_CAPTURE_GLOBAL', null, 2);
 }

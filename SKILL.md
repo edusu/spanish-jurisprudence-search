@@ -65,12 +65,60 @@ The backend is **Autonomy IDOL**. Implications for query phrasing:
   - "modificación sustancial" → "art 41 ET", "MSCT", "alteración condiciones laborales"
   - "responsabilidad patrimonial" → "indemnización Administración", "art 32 LRJSP"
 
-## Refining workflow
+## Search loop — query, triage, refine, then respond
 
-1. **First pass**: broad query + jurisdicción filter → gauge total hits and result quality.
-2. If too many penal hits → add `--jurisdiccion SOCIAL` (or matching).
-3. If too few → drop one term, swap to synonym, or remove comunidad filter.
-4. If user wants doctrinal coverage (not just one case) → return 3–5 representative results from the same tribunal as a "line" of cases.
+This skill operates as a **loop, not a single query**. Spanish judicial decisions contain extensive boilerplate: arts. 55.5 ET, 14 CE, 24 CE, 96 LRJS and similar protective rules are recited routinely in nearly every labour dismissal case, regardless of whether the protected ground is actually at issue. A first-pass search on a generic phrase will almost always include such template matches. **Treating those hits as relevant is the single biggest failure mode of this skill** — it leads to confidently telling the user "*here's a case about X*" when the case merely cites the article protecting X while ruling on something else entirely.
+
+The correct workflow runs **before responding to the user**: search → triage → refine and re-search → (optionally fetch a PDF to confirm) → report. Do not stop at the first result set if the hits look like template. Refine and try again yourself; do not just tell the user to refine.
+
+Budget: at most **2–3 refinement passes** per user request. The WAF starts blocking around 5 rapid requests, so a typical loop is initial + 1–2 refinements + maybe one PDF fetch. Stay inside that envelope.
+
+### Step 1: First pass
+
+Broad query + the obvious filters (jurisdicción, comunidad, fechas). Goal: gauge total hits and what's actually in the database.
+
+- Too many penal hits for a labour-law topic → add `--jurisdiccion SOCIAL` (or the matching sala) and retry.
+- Too few hits → drop one term, swap to a synonym, or remove the comunidad filter.
+
+### Step 2: Triage — template vs substance
+
+The `text` field is IDOL's auto-extracted résumé. For each candidate hit, ask whether the snippet describes **the case** (hechos, fundamentos, fallo) or merely **names statutes**.
+
+- ❌ Template: *"…el art. 55.5 ET considera nulo el despido de personas trabajadoras víctimas de violencia de género o sexual por el ejercicio de su derecho a la tutela judicial efectiva…"* — recitation of the legal regime. The article was cited; the case is not necessarily about it.
+- ✅ Substantive: *"…la actora acreditó su condición de víctima de violencia de género mediante orden de protección de fecha…, y fue despedida tras solicitar la reducción de jornada prevista en el art. 37.8 ET…"* — the protected ground is a fact of the case and the dispute turns on it.
+
+Substantive engagement appears in hechos probados ("*la trabajadora ostentaba la condición de…*"), in fundamentos jurídicos that analyse the cause *as applied* to this case, or in the case's own headnote (the "RESUMEN" field — distinct from the "Resumen Automático" IDOL extracts). Keywords buried inside a long list of statutory citations are the strongest signal of boilerplate.
+
+If a snippet leaves you genuinely uncertain whether the case is substantive or template — and the case is otherwise a strong candidate — **fetch the PDF** (`url` field, see "Document fetch" below) and read the fundamentos jurídicos. Two minutes of reading is cheaper than misleading the user. Do not, however, fetch PDFs for every hit; use this for the 1–2 borderline candidates that would change your answer.
+
+### Step 3: If hits are weak, refine and re-search yourself
+
+Generic queries ("violencia de género", "despido nulo") match every case that *mentions* the rule. If the triage in step 2 reveals all or most hits are template, **issue a second search yourself** — do not stop and recommend the user run one. The right refinement is to query the **literal phrasing of the article that creates the specific cause of action** the user is asking about:
+
+| Cause | Article | Better query |
+|---|---|---|
+| Extinción a instancia de la trabajadora víctima | art. 49.1.m ET | `"abandono definitivo puesto trabajo víctima violencia género"` |
+| Nulidad del despido por ejercicio de derechos | art. 55.5.b ET | `"despido nulo ejercicio derechos reducción jornada víctima"` |
+| Cómputo de ausencias derivadas de violencia | art. 52.d ET | `"ausencias justificadas víctima violencia género no computables"` |
+| Reducción / reordenación de jornada | art. 37.8 ET | `"reducción jornada víctima violencia género horario flexible"` |
+
+The table is illustrative, not exhaustive — for any cause of action, the principle is: pick the article that creates the cause, then query phrases that would appear in the *ratio* of a case applying it, not phrases that appear in routine recitations of the protective regime. Article numbers tokenise unreliably in IDOL (`49.1.m` is not one token), so combining a literal statutory phrase with a tribunal/comunidad filter outperforms `"art 49.1.m ET"` alone.
+
+If the user's request doesn't map cleanly to one article, pick the closest cause and run the refined search. You can chain: if refinement on art. 55.5.b still yields template, try art. 49.1.m. Stop after **2–3 refinements** (WAF budget) and report.
+
+### Step 4: Report — including the "nothing relevant found" outcome
+
+After the loop, report honestly. Three outcomes:
+
+1. **Found substantively relevant cases.** List them with ECLI/ROJ, fecha, ponente and one line on what makes them on-point. Note which search yielded them ("*found via refined query on art. 49.1.m ET phrasing*").
+
+2. **Found tangential cases but nothing directly on the cause.** Name them as tangential, do not dress them up. E.g.: "*STSJ X menciona la protección como bloque legal pero el despido se resuelve en otro motivo. No es jurisprudencia sobre la causa solicitada.*"
+
+3. **Nothing relevant after refinement.** **Say so explicitly.** Example:
+
+   > *"Ejecuté 3 búsquedas: inicial `<q1>` (95 hits, todos cita template del art. 55.5 ET), refinada con art. 49.1.m `<q2>` (12 hits, 1 tangencial), refinada con art. 37.8 `<q3>` (0 hits). No he encontrado jurisprudencia del TSJ de Canarias que resuelva sobre la causa solicitada en el rango de fechas indicado. El caso más próximo es STSJ X, pero ruled on Y, no on the gender-violence ground. Posibles siguientes pasos: ampliar a otra comunidad, otro rango, o consultar la Sala Cuarta del TS."*
+
+   A clean "no result found, here is what I tried" is far more useful than a list of impressive-looking citations that don't answer the question. Hiding the absence behind boilerplate matches is the failure mode this loop exists to prevent.
 
 ## WAF / rate-limit awareness
 
