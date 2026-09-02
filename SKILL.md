@@ -56,7 +56,8 @@ Output is JSON to stdout: `{"total": N, "count": M, "items": [...]}`. Each item 
 
 The backend is **Autonomy IDOL**. Implications for query phrasing:
 
-- **OR by default**: `"violencia género extinción"` returns docs with ANY of those tokens. To constrain, add filters or use longer phrases that force domain — e.g. `"abandono definitivo puesto trabajo víctima violencia género"` (literal art. 49.1.m phrasing).
+- **AND across tokens, not OR**: the free-text box requires EVERY token to appear somewhere in the document. `"derrame café caliente pasajero aeronave quemaduras"` returns **zero** hits, while each of those terms alone matches thousands of documents. Build queries **short and add terms**, never long-and-then-trim — three or four high-signal tokens is usually the ceiling.
+- **AND is not relevance**: matching every token only means the words co-occur somewhere in the full text, frequently by accident. `"café aeronave"` returns 179 hits that are almost entirely drug-trafficking judgments, where a coffee and an aircraft turn up in unrelated paragraphs. Query the **legal cause**, not the facts (see step 3).
 - **Penal vs Social mix**: queries about "violencia de género" return mostly **penal** results unless you filter `--jurisdiccion SOCIAL`. Always set jurisdicción for labor-law topics.
 - **Article numbers tokenize weirdly**: `49.1.m` may not match. Better to combine: legal phrase + tribunal + comunidad. Or use `--ecli` / `--roj` for direct lookup.
 - **Synonyms matter**: the law and case law don't always use the user's phrasing. Translate first:
@@ -75,10 +76,11 @@ Budget: at most **2–3 refinement passes** per user request. The WAF starts blo
 
 ### Step 1: First pass
 
-Broad query + the obvious filters (jurisdicción, comunidad, fechas). Goal: gauge total hits and what's actually in the database.
+Start with **three or four high-signal tokens** plus the obvious filters (jurisdicción, comunidad, fechas). Because the box ANDs its tokens, opening with a long descriptive sentence is the single most reliable way to get zero hits — don't. Goal: gauge total hits and what's actually in the database.
 
+- Zero hits → you almost certainly used too many tokens. Cut to the two or three that carry the legal meaning, then add terms back one at a time.
 - Too many penal hits for a labour-law topic → add `--jurisdiccion SOCIAL` (or the matching sala) and retry.
-- Too few hits → drop one term, swap to a synonym, or remove the comunidad filter.
+- Many hits but visibly off-topic → the tokens are co-occurring incidentally; switch from fact words to the statutory or doctrinal name of the cause.
 
 ### Step 2: Triage — template vs substance
 
@@ -86,6 +88,8 @@ The `text` field is IDOL's auto-extracted résumé. For each candidate hit, ask 
 
 - ❌ Template: *"…el art. 55.5 ET considera nulo el despido de personas trabajadoras víctimas de violencia de género o sexual por el ejercicio de su derecho a la tutela judicial efectiva…"* — recitation of the legal regime. The article was cited; the case is not necessarily about it.
 - ✅ Substantive: *"…la actora acreditó su condición de víctima de violencia de género mediante orden de protección de fecha…, y fue despedida tras solicitar la reducción de jornada prevista en el art. 37.8 ET…"* — the protected ground is a fact of the case and the dispute turns on it.
+
+- ❌ Incidental: the query words are all present but scattered across unrelated passages — a drug-trafficking judgment that happens to mention a *café* in one paragraph and an *aeronave* in another. This is distinct from template matching: template noise is boilerplate *law*, incidental noise is boilerplate *narrative*. The tell is a RESUMEN naming a completely different subject matter from the one you asked about.
 
 Substantive engagement appears in hechos probados ("*la trabajadora ostentaba la condición de…*"), in fundamentos jurídicos that analyse the cause *as applied* to this case, or in the case's own headnote (the "RESUMEN" field — distinct from the "Resumen Automático" IDOL extracts). Keywords buried inside a long list of statutory citations are the strongest signal of boilerplate.
 
@@ -168,11 +172,33 @@ playwright-cli eval "() => { const e=(window.__log||[]).find(x=>x.url&&x.url.inc
 
 ## Document fetch
 
-To get the full text of a document, follow the `url` field. **It returns a PDF, not HTML.** Save and read with a PDF tool, or open in browser:
+To get the full text of a document, follow the `url` field. It serves a PDF (`content-type: application/pdf`).
+
+> [!warning]
+> **`curl` does not work**, even with a browser User-Agent. The endpoint is session-bound, so a bare request returns an HTML error page that `curl -o sentencia.pdf` happily saves under a `.pdf` name — `file` reports "HTML document" and any PDF parser then fails on a file that looks superficially fine. Always check the magic bytes are `%PDF-`.
+
+Fetch from the **page context of the playwright session** that ran the search, which carries the cookies. Base64 the bytes, dump to a file, and decode — never let the base64 hit your context window:
 
 ```bash
-curl -s -o sentencia.pdf -A "$UA" "<url-from-result>"
+OUT=/tmp/cendoj   # scratch dir
+U="<url-from-result>"
+playwright-cli eval "async () => { const r=await fetch('$U',{credentials:'include'}); const b=new Uint8Array(await r.arrayBuffer()); let s=''; for(let i=0;i<b.length;i++) s+=String.fromCharCode(b[i]); return btoa(s); }" > "$OUT/raw.txt" 2>&1
+
+python3 - "$OUT" <<'EOF'
+import re, sys, base64, pathlib
+out = pathlib.Path(sys.argv[1])
+m = re.search(r'"([A-Za-z0-9+/=]{500,})"', (out / 'raw.txt').read_text())
+if not m:
+    print('NO BASE64 FOUND'); sys.exit(1)
+d = base64.b64decode(m.group(1))
+(out / 'sent.pdf').write_bytes(d)
+print('bytes', len(d), 'magic', d[:5])
+EOF
+
+pdftotext "$OUT/sent.pdf" "$OUT/sent.txt"
 ```
+
+Then grep `sent.txt` for the fact keywords and read the fundamentos jurídicos. The `>` redirect matters: a judgment is ~130 KB, so the base64 is ~180 KB of noise you must keep out of the transcript.
 
 The URL pattern is `/search/AN/openDocument/<UUID32>/<YYYYMMDD>` where the trailing date is the **optimization date** (when IDOL indexed it), NOT the resolution date — that one is in `data-fechares`.
 
