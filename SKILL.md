@@ -9,7 +9,9 @@ Searches the official Spanish jurisprudence database at `poderjudicial.es/search
 
 ## Tooling
 
-- **Primary**: `~/utils/jurisprudencia/cendoj_search.py` — pure-stdlib Python script. Bootstraps session, posts query, parses XHTML, returns JSON.
+`<skill-path>` below is this skill's own base directory, reported when the skill loads. The script sits at its root, so the skill works from whatever location it is installed in — do not hardcode an absolute path.
+
+- **Primary**: `<skill-path>/cendoj_search.py` — pure-stdlib Python script. Bootstraps session, posts query, parses XHTML, returns JSON.
 - **Fallback**: when the WAF blocks the script (HTTP 500 / "vuelva a probar dentro de unos minutos"), use `playwright-cli` to drive the UI directly — see "WAF fallback" below.
 
 ## When to use it
@@ -24,22 +26,22 @@ Trigger on any of these:
 
 ```bash
 # Basic search
-~/utils/jurisprudencia/cendoj_search.py "responsabilidad patrimonial sanitaria"
+<skill-path>/cendoj_search.py "responsabilidad patrimonial sanitaria"
 
 # Filtered: sala social + Canarias + fechas
-~/utils/jurisprudencia/cendoj_search.py "despido nulo víctima violencia género" \
+<skill-path>/cendoj_search.py "despido nulo víctima violencia género" \
   --jurisdiccion SOCIAL --comunidad CANARIAS \
   --desde 01/01/2023 --hasta 31/12/2024 --per-page 15
 
 # Lookup by exact identifier
-~/utils/jurisprudencia/cendoj_search.py "" --ecli "ECLI:ES:TSJICAN:2024:913"
-~/utils/jurisprudencia/cendoj_search.py "" --roj "STSJ ICAN 287/2026"
+<skill-path>/cendoj_search.py "" --ecli "ECLI:ES:TSJICAN:2024:913"
+<skill-path>/cendoj_search.py "" --roj "STSJ ICAN 287/2026"
 
 # Pagination (start=1 → 11 → 21 …)
-~/utils/jurisprudencia/cendoj_search.py "art 41 ET" --start 11 --per-page 10
+<skill-path>/cendoj_search.py "art 41 ET" --start 11 --per-page 10
 
 # Truncate the `text` field for compact output
-~/utils/jurisprudencia/cendoj_search.py "..." --truncate 300
+<skill-path>/cendoj_search.py "..." --truncate 300
 ```
 
 Output is JSON to stdout: `{"total": N, "count": M, "items": [...]}`. Each item has `ref`, `db`, `fechares` (YYYYMMDD), `url` (link to the full document), and `text` (extracted résumé / first paragraph).
